@@ -1,22 +1,24 @@
 FCGI ;; Fastcgi-Interface
     ;; Written by Winfried Bantel
     ;; Published under Gnu Public License 2018
+    s version=20190321
     ;
     ; Now start all backendjobs and supervise them
     ; If a backend-job crashes it will be restarted latest after
     ;s $ZTRAP="s f=""/tmp/fastcgi-""_$J_"".log"" o f:(append) u f w $zerror,!,$zstatus,! h"
     ;s $ETRAP="d ETRAP^FCGI h"
     s $ztrap="g ETRAP^FCGI"
-    d log("start") s nr=0
     ;
-    s nr=0
-    d log("los / wait")
+    s nr=0,log=+$G(^FCGI("PRM","LOG")),to=$S($G(^FCGI("PRM","LOG"))>0:^("LOG"),1:60)
+    d:log log("start") s nr=0
 input      ;
-    i $$readrecord(.t,.id,.data)<0  g finish
-    s %fcgi("internal","requestId")=id
-    d log("record "_t_","_$L(data))
+    i $$readrecord(.t,.id,.data)<0 d:log log("fini "_$J) q
+    d:log log(t_":"_id_":"_$L(data))
     i t=1 d  g input
-    . k %fcgi s nr=nr+1,%fcgi("i","FCGI_KEEP_CONN")=$A(data,3)
+    . k %fcgi
+    . s nr=nr+1,%fcgi("internal","FCGI_KEEP_CONN")=$A(data,3)
+    . s %fcgi("internal","requestId")=id
+    . d:log log("Keep-conn: "_%fcgi("internal","FCGI_KEEP_CONN"))
     e  i t=4 d  g input
     . s %fcgi("i","params")=$G(%fcgi("i","params"))_data q:$L(data)
     . s pos=1 f  q:pos>$L(%fcgi("i","params"))  do
@@ -32,14 +34,11 @@ input      ;
     . s %fcgi("i","stdin")=$G(%fcgi("i","stdin"))_data q
     ;
     ; Jetzt sind alle Daten da
-    ;d DATAOUT("Content-Type: text/plain"_$C(13,10)_$C(13,10))
-    ;d DATAOUT($H_$C(13,10)_$J_$C(13,10)_nr)
-    ;w $C(1,3,0,1,0,8,0,0),$C(0,0,0,0,0,0,0,0)
 
     s %fcgi="/tmp/fcgi-fifo-"_$J o %fcgi:(newversion:stream:nowrap)
     i $G(%fcgi("i","header","HTTP_CONTENT_TYPE"))="application/x-www-form-urlencoded",$G(%fcgi("i","stdin"))'="" d HTMLVARDECODE(%fcgi("i","stdin"),"%fcgi(""i"",""_POST"")")
     i %fcgi("i","header","QUERY_STRING")'="" d HTMLVARDECODE(%fcgi("i","header","QUERY_STRING"),"%fcgi(""i"",""_GET"")")
-    s %fcgi("o","header","X-nr")=nr,%fcgi("o","header","X-job")=$j
+    s %fcgi("o","header","X-nr")=nr,%fcgi("o","header","X-job")=$j,%fcgi("o","header","X-version")=version
     ;
     ; Jetzt auf Programme verteilen
     s %fcgi("internal","entryRef")=$G(^FCGI("DOCUMENT_URI",$P(%fcgi("i","header","DOCUMENT_URI"),"/",1,3)))
@@ -74,40 +73,38 @@ OUT ; Header vervollstaendigen und ausgeben
     . s %fcgi("o","header","Content-Length")=$L(@%fcgi("o","glo")) d HEADEROUT,DATAOUT(@%fcgi("o","glo"))
 
     e  d ; %fcgi
-    . i $G(^FCGI("PRM","GZ"))=1 d  ; ZIP
-    . . s %fcgi("o","header","Content-Encoding")="gzip"
-    . . c %fcgi zsystem "gzip -f "_%fcgi
-    . . s of=%fcgi_".gz" o of:(append:seek="-1") u of r in#1 s %fcgi("o","header","Content-Length")=$zkey c of
-    . e  d
-    . . u %fcgi s %fcgi("o","header","Content-Length")=$zkey c %fcgi
-    . . s of=%fcgi
+    . c %fcgi
+    . i $G(^FCGI("PRM","GZ"))=1 s %fcgi("o","header","Content-Encoding")="gzip" zsystem "gzip -f "_%fcgi s %fcgi=%fcgi_".gz"
+    . o %fcgi:(fixed:append)
+    . u %fcgi:(width=1:seek="-0") s %fcgi("o","header","Content-Length")=+$ZKEY
     . d HEADEROUT
-    . d log("Laenge:"_%fcgi("o","header","Content-Length"))
-    . i %fcgi("o","header","Content-Length")>0 d
-    . . o of:(readonly:NOWRAP:fixed) f i=1:1 u of r in#65535 q:$A(in)<0  d DATAOUT(in)
-    . . u 0 c of:delete
-    . d log("feddish")
+    . u %fcgi:(WIDTH=65535:rewind)
+    . f i=1:1 u %fcgi r in#65535 q:$A(in)<0  d DATAOUT(in)
+    u 0 c %fcgi:delete
     ;
 OUTEND  ;
-    w $C(1,3,0,1,0,8,0,0),$C(0,0,0,0,0,0,0,0)
+    d DATAOUT("")
+    u 0:FLUSH w $C(1,3,0,1,0,8,0,0),$C(0,0,0,0,0,0,0,0) u 0:FLUSH
+    i '%fcgi("internal","FCGI_KEEP_CONN") h
     g input
-finish  ;
-    q
+                                                                
 ETRAP   ;
-    s ^dummy=$H_" "_$ZERROR_" "_$ZSTATUS
+    ;s ^dummy=$H_" "_$ZERROR_" "_$ZSTATUS
+    d:log log($H_" "_$ZERROR_" "_$ZSTATUS)
     ;d DATAOUT("Content-Type: text/plain"_$C(13,10,13,10)_"EROR")
     d DATAOUT("Content-Type: text/plain"_$C(13,10,13,10)_$ZERROR_$C(13,10)_$ZSTATUS_$C(13,10))
     w $C(1,3,0,1,0,8,0,0),$C(0,0,0,0,0,0,0,0)
     h
     ;
 log(txt)
-    s f="/tmp/fastcgi-"_$J_".log" o f:(append)
-    u f w $h,",",txt,! u 0
+    n (txt)
+    s f="/tmp/fastcgi.log" o f:(append)
+    u f w $h,",",txt,! u 0 c f
     q
 
 readrecord(type,requestId,contentData)
-    n (type,requestId,contentData)
-    u 0 r *version:60 e  q -1
+    n (type,requestId,contentData,to)
+    u 0 r *version:to e  q -1
     r *type:1 e  q -1
     r *requestIdB1:1 e  q -1
     r *requestIdB0:1 e  q -1
@@ -128,8 +125,7 @@ HEADEROUT   ;
     q
 
 DATAOUT(in) ; Schreibt Satz 6: FCGI_STDOUT
-                                     u 0 w $C(1,6,%fcgi("internal","requestId")\256,%fcgi("internal","requestId")#256,$L(in)\256,$L(in)#256,0,0),in
-    ;u 0 w $C(1,6,requestIdB1,requestIdB0,$L(in)\256,$L(in)#256,0,0),in
+    u 0 w $C(1,6,%fcgi("internal","requestId")\256,%fcgi("internal","requestId")#256,$L(in)\256,$L(in)#256,0,0),in
     q
     ;
 HTMLVARDECODE(data,var)  ; Decodiert nach HTML-Variablen-Standard
@@ -139,7 +135,7 @@ HTMLVARDECODE(data,var)  ; Decodiert nach HTML-Variablen-Standard
     . i $L(ind) s dummy(ind)=val
     m @var=dummy
     q
-                                     
+
 CONVERT(t)	;
     n (t)
     s t=$TR(t,"+"," "),p=0
@@ -152,7 +148,9 @@ HEX2DEZ(dez)	;
     q hex
 
 DOLLARH  ;
-    s %fcgi("o","header","Content-Type")="text/plain" w $h_$C(10)
+    s %fcgi("o","header","Content-Type")="text/plain"
+    ;s %fcgi("o","stdout")=$H
+    w $h,!
     q
 
 SID() i $G(%fcgi("i","header","SID"))'?1.N1","1.N d  q 0

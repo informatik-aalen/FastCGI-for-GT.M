@@ -1,0 +1,22 @@
+<!doctype html>
+<html ng-app="ajaxApp">
+ <head>
+  <script src="/lib/angular-1-7-2.min.js"></script>
+  <script src="EXANGULARJS.js"></script>
+ </head>
+ <body ng-controller="Controller as q">
+  <table>
+   <tr><th>ID:</th><td>
+    <input size="3" ng-model="q.id"/>
+    <input type="button" value="Load" ng-click="q.load()"/>
+   </td></tr>
+   <tr><th>Vorname:</th><td>
+    <input type="text" ng-model="q.address.VN">
+    <tr><th>Nachname:</th><td>
+    <input type="text" ng-model="q.address.NN"></th></tr>
+   <tr><th></th><td>
+    <input type="button" value="Save" ng-click="q.send()"/>
+   {{q.savetext}}</td></tr>
+  </table>
+ </body>
+</html>
